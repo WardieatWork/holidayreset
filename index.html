@@ -6,6 +6,9 @@
     <title>Holiday Reset Check-In | Bluebird Labs & Mind Cultivation</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <!-- PDF Generation Libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <style>
         body {
             font-family: 'Inter', sans-serif;
@@ -434,17 +437,36 @@ const questionsData = [
 ];
 
 // Configuration
-const GOOGLE_SCRIPT_URL = 'YOUR_GOOGLE_APPS_SCRIPT_URL_HERE'; // Not needed for Wix integration
+const GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzbn8HwNzhy_fAeUKi-ERcwtsMYg3Fyd7ALjWeqgEppVtXryd5jcLmib3LJF9TlAmM/exec'; // Replace with your Google Apps Script Web App URL
 
 // State variables
 let currentQuestionIndex = 0;
 let answers = {};
 let startTime;
+let userId = null;
+let userEmail = null;
+let userName = null;
+let assessmentResults = null;
+
+// Get URL parameters
+function getUrlParameter(name) {
+    const urlParams = new URLSearchParams(window.location.search);
+    return urlParams.get(name);
+}
 
 // Initialize app
 function initializeApp() {
     console.log('App initialized');
-    
+
+    // Extract user information from URL parameters
+    userId = getUrlParameter('userId') || getUrlParameter('id') || 'anonymous_' + Date.now();
+    userEmail = getUrlParameter('email') || getUrlParameter('userEmail') || null;
+    userName = getUrlParameter('name') || getUrlParameter('userName') || null;
+
+    console.log('User ID:', userId);
+    if (userEmail) console.log('User Email:', userEmail);
+    if (userName) console.log('User Name:', userName);
+
     // Start assessment
     const startButton = document.getElementById('start-assessment');
     if (startButton) {
@@ -453,13 +475,13 @@ function initializeApp() {
     } else {
         console.error('Start button not found!');
     }
-    
+
     // Navigation buttons
     document.getElementById('previous-btn').addEventListener('click', previousQuestion);
     document.getElementById('next-btn').addEventListener('click', nextQuestion);
-    
+
     // Download blueprint
-    document.getElementById('download-blueprint-btn').addEventListener('click', trackDownloadClick);
+    document.getElementById('download-blueprint-btn').addEventListener('click', downloadPDF);
 }
 
 // Start assessment
@@ -624,9 +646,20 @@ function showResults() {
     
     // Overall assessment
     document.getElementById('overall-assessment').textContent = getOverallAssessment(totalScore);
-    
+
     // Generate insights
     generateInsights(scores);
+
+    // Store results for PDF generation
+    assessmentResults = {
+        scores: scores,
+        totalScore: totalScore,
+        completionTime: new Date(),
+        timeTaken: Math.round((new Date() - startTime) / 1000 / 60) // minutes
+    };
+
+    // Submit results to Google Sheets
+    submitToGoogleSheets(scores, totalScore);
 }
 
 // Get status based on score
@@ -727,11 +760,265 @@ function generateInsights(scores) {
     insightsContainer.innerHTML = insights;
 }
 
-// Track download click
-function trackDownloadClick(e) {
+// Submit results to Google Sheets
+async function submitToGoogleSheets(scores, totalScore) {
+    if (GOOGLE_SCRIPT_URL === 'YOUR_GOOGLE_APPS_SCRIPT_URL_HERE') {
+        console.warn('Google Sheets integration not configured. Skipping data submission.');
+        return;
+    }
+
+    try {
+        const data = {
+            userId: userId,
+            userEmail: userEmail,
+            userName: userName,
+            timestamp: new Date().toISOString(),
+            physicalEnergy: scores['Physical Energy'],
+            emotionalEnergy: scores['Emotional Energy'],
+            mentalEnergy: scores['Mental Energy'],
+            spiritualEnergy: scores['Spiritual Energy'],
+            totalScore: totalScore,
+            timeTakenMinutes: assessmentResults.timeTaken,
+            answers: JSON.stringify(answers)
+        };
+
+        const response = await fetch(GOOGLE_SCRIPT_URL, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(data)
+        });
+
+        console.log('Results submitted to Google Sheets successfully');
+    } catch (error) {
+        console.error('Error submitting to Google Sheets:', error);
+    }
+}
+
+// Generate and download PDF
+async function downloadPDF(e) {
     e.preventDefault();
-    // In production, you would trigger an actual download here
-    alert('Thank you! Your Holiday Recovery Blueprint will be emailed to you along with your results.');
+
+    // Show loading state
+    const btn = e.target;
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '⏳ Generating PDF...';
+    btn.disabled = true;
+
+    try {
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF('p', 'mm', 'a4');
+
+        // Page dimensions
+        const pageWidth = doc.internal.pageSize.getWidth();
+        const pageHeight = doc.internal.pageSize.getHeight();
+        const margin = 20;
+        let yPos = margin;
+
+        // Colors
+        const tealColor = [3, 152, 158];
+        const goldColor = [212, 165, 116];
+        const darkBlue = [44, 95, 122];
+
+        // Helper function to add new page if needed
+        function checkPageBreak(requiredSpace) {
+            if (yPos + requiredSpace > pageHeight - margin) {
+                doc.addPage();
+                yPos = margin;
+                return true;
+            }
+            return false;
+        }
+
+        // Header with gradient effect
+        doc.setFillColor(tealColor[0], tealColor[1], tealColor[2]);
+        doc.rect(0, 0, pageWidth, 40, 'F');
+        doc.setFillColor(goldColor[0], goldColor[1], goldColor[2]);
+        doc.rect(0, 35, pageWidth, 5, 'F');
+
+        // Title
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(24);
+        doc.setFont('helvetica', 'bold');
+        doc.text('Holiday Reset Check-In', pageWidth / 2, 20, { align: 'center' });
+        doc.setFontSize(12);
+        doc.setFont('helvetica', 'normal');
+        doc.text('Your Personal Energy Blueprint', pageWidth / 2, 30, { align: 'center' });
+
+        yPos = 50;
+
+        // User info (if available)
+        if (userName || userEmail) {
+            doc.setTextColor(darkBlue[0], darkBlue[1], darkBlue[2]);
+            doc.setFontSize(11);
+            if (userName) {
+                doc.text(`Name: ${userName}`, margin, yPos);
+                yPos += 7;
+            }
+            if (userEmail) {
+                doc.text(`Email: ${userEmail}`, margin, yPos);
+                yPos += 7;
+            }
+        }
+
+        // Date
+        doc.setFontSize(10);
+        doc.setTextColor(100, 100, 100);
+        doc.text(`Assessment Date: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}`, margin, yPos);
+        yPos += 12;
+
+        // Overall Score Section
+        checkPageBreak(40);
+        doc.setFillColor(245, 245, 245);
+        doc.roundedRect(margin, yPos, pageWidth - 2 * margin, 35, 3, 3, 'F');
+
+        doc.setTextColor(darkBlue[0], darkBlue[1], darkBlue[2]);
+        doc.setFontSize(16);
+        doc.setFont('helvetica', 'bold');
+        doc.text('Overall Assessment', margin + 5, yPos + 10);
+
+        doc.setFontSize(11);
+        doc.setFont('helvetica', 'normal');
+        const overallText = getOverallAssessment(assessmentResults.totalScore);
+        const splitOverall = doc.splitTextToSize(overallText, pageWidth - 2 * margin - 10);
+        doc.text(splitOverall, margin + 5, yPos + 20);
+
+        yPos += 45;
+
+        // Energy Dimensions
+        doc.setFontSize(16);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(darkBlue[0], darkBlue[1], darkBlue[2]);
+        checkPageBreak(15);
+        doc.text('Your Energy Levels', margin, yPos);
+        yPos += 10;
+
+        // Draw each dimension
+        const dimensions = ['Physical Energy', 'Emotional Energy', 'Mental Energy', 'Spiritual Energy'];
+        dimensions.forEach((dimension, index) => {
+            checkPageBreak(45);
+
+            const score = assessmentResults.scores[dimension];
+            const percentage = (score / 20) * 100;
+            const status = getStatus(score);
+
+            // Dimension box
+            const boxY = yPos;
+            const boxHeight = 40;
+
+            // Border color based on score
+            const borderColor = score >= 17 ? tealColor :
+                               score >= 13 ? goldColor :
+                               score >= 9 ? [184, 115, 51] : [251, 173, 8];
+
+            doc.setDrawColor(borderColor[0], borderColor[1], borderColor[2]);
+            doc.setLineWidth(0.5);
+            doc.roundedRect(margin, boxY, pageWidth - 2 * margin, boxHeight, 2, 2, 'S');
+
+            // Dimension name
+            doc.setFontSize(12);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor(darkBlue[0], darkBlue[1], darkBlue[2]);
+            doc.text(dimension, margin + 5, boxY + 8);
+
+            // Score and status
+            doc.setFontSize(10);
+            doc.setFont('helvetica', 'normal');
+            doc.text(`${score}/20 points - ${status}`, margin + 5, boxY + 15);
+
+            // Progress bar
+            const barX = margin + 5;
+            const barY = boxY + 20;
+            const barWidth = pageWidth - 2 * margin - 10;
+            const barHeight = 6;
+
+            // Background
+            doc.setFillColor(230, 230, 230);
+            doc.roundedRect(barX, barY, barWidth, barHeight, 1, 1, 'F');
+
+            // Fill
+            doc.setFillColor(borderColor[0], borderColor[1], borderColor[2]);
+            doc.roundedRect(barX, barY, barWidth * (percentage / 100), barHeight, 1, 1, 'F');
+
+            // Message
+            doc.setFontSize(9);
+            doc.setTextColor(80, 80, 80);
+            const message = getHolidayMessage(dimension, score);
+            const splitMessage = doc.splitTextToSize(message, pageWidth - 2 * margin - 10);
+            doc.text(splitMessage, margin + 5, boxY + 32);
+
+            yPos += boxHeight + 8;
+        });
+
+        // Insights Section
+        checkPageBreak(60);
+        yPos += 5;
+        doc.setFontSize(14);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(darkBlue[0], darkBlue[1], darkBlue[2]);
+        doc.text('Your Personalized Insights', margin, yPos);
+        yPos += 8;
+
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(60, 60, 60);
+
+        let insightAdded = false;
+        Object.entries(assessmentResults.scores).forEach(([dimension, score]) => {
+            if (score < 13) {
+                checkPageBreak(15);
+                const insight = getInsightText(dimension);
+                const splitInsight = doc.splitTextToSize(`• ${insight}`, pageWidth - 2 * margin - 5);
+                doc.text(splitInsight, margin + 3, yPos);
+                yPos += splitInsight.length * 5 + 3;
+                insightAdded = true;
+            }
+        });
+
+        if (!insightAdded) {
+            const insight = "Your energy levels are strong across all dimensions! Continue with your current practices and join our workshops to maintain this through the busy holiday season.";
+            const splitInsight = doc.splitTextToSize(insight, pageWidth - 2 * margin);
+            doc.text(splitInsight, margin, yPos);
+            yPos += splitInsight.length * 5;
+        }
+
+        // Footer
+        const footerY = pageHeight - 20;
+        doc.setDrawColor(goldColor[0], goldColor[1], goldColor[2]);
+        doc.setLineWidth(0.5);
+        doc.line(margin, footerY, pageWidth - margin, footerY);
+
+        doc.setFontSize(9);
+        doc.setTextColor(100, 100, 100);
+        doc.text('A collaboration by Bluebird Labs & Mind Cultivation', pageWidth / 2, footerY + 5, { align: 'center' });
+        doc.text('www.bluebirdlabs.co', pageWidth / 2, footerY + 10, { align: 'center' });
+
+        // Save PDF
+        const fileName = `Holiday-Energy-Blueprint-${userName || userId}-${new Date().toISOString().split('T')[0]}.pdf`;
+        doc.save(fileName);
+
+        console.log('PDF generated successfully');
+    } catch (error) {
+        console.error('Error generating PDF:', error);
+        alert('There was an error generating your PDF. Please try again.');
+    } finally {
+        // Restore button
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    }
+}
+
+// Helper function to get insight text for PDF
+function getInsightText(dimension) {
+    const insights = {
+        'Physical Energy': 'Physical Energy: Learn the 4 Types of Rest in our workshops. Quick win: Schedule sleep like you schedule meetings.',
+        'Emotional Energy': 'Emotional Energy: Setting boundaries with family isn\'t selfish - it\'s essential. We\'ll show you how.',
+        'Mental Energy': 'Mental Energy: Your brain needs to unplug - literally. Discover digital boundaries for true rest.',
+        'Spiritual Energy': 'Spiritual Energy: The holidays are meant for reflection. Reconnect with what matters most.'
+    };
+    return insights[dimension];
 }
 
 // Initialize when page loads
